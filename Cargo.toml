@@ -1,0 +1,12 @@
+[package]
+name = "scirpophaga"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+env_logger = "0.11.10"
+goblin = "0.10.7"
+hex = "0.4.3"
+log = "0.4.30"
+unicorn-engine = "2.1.5"
