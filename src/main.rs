@@ -5,7 +5,8 @@ use unicorn_engine::{Arch, Mode, Prot, RegisterARM64, Unicorn};
 
 const FRAG1: &[u8] = include_bytes!("../frag1.bin");
 const FRAG2: &[u8] = include_bytes!("../frag2.bin");
-const FUN_LEN: usize = 0x1330;
+const PRE1_FUN_LEN: usize = 0x1330;
+const PRE2_RUN_LEN: usize = 0x2974;
 
 fn main() {
     env_logger::init();
@@ -25,16 +26,21 @@ fn main() {
 }
 
 fn start(input: &[u8]) -> anyhow::Result<()> {
+    #[derive(Debug, thiserror::Error)]
+    enum Error {
+        #[error("frag not found: {0}")]
+        FragNotFound(String),
+    }
     log::info!("[*] searching in input, len: 0x{:x}", input.len());
     let pos1 = input
         .windows(FRAG1.len())
         .position(|it| it == FRAG1)
-        .unwrap();
+        .ok_or(Error::FragNotFound("FRAG1".to_string()))?;
     log::info!("[+] found C2_pre1 fn offset: 0x{:x}", pos1);
     let pos2 = input
         .windows(FRAG2.len())
         .position(|it| it == FRAG2)
-        .unwrap();
+        .ok_or(Error::FragNotFound("FRAG2".to_string()))?;
     log::info!("[+] found C2_pre2 fn offset: 0x{:x}", pos2);
     log::info!("[*] parsing elf, len: 0x{:x}", input.len());
     let elf = try_parse_elf(input)?;
@@ -61,21 +67,23 @@ fn start(input: &[u8]) -> anyhow::Result<()> {
         );
     }
     log::info!("[*] running sample1: C2_pre1");
-    let output = sim(input, pos1 as u64, FUN_LEN as u64, &elf)?;
+    let output = sim(input, pos1 as u64, PRE1_FUN_LEN as u64, &elf)?;
     log::info!("[+] running finished");
     log::info!("      Q0: {:x}", output.0);
     log::info!("      Q1: {:x}", output.1);
     log::info!("[*] running sample2: C2_pre2");
-    let output2 = sim_2(input, pos2 as u64, 0x2974, &elf)?;
+    let output2 = sim_2(input, pos2 as u64, PRE2_RUN_LEN as u64, &elf)?;
     log::info!("[+] running finished");
     log::info!("      Q0: {:x}", output2.0);
     log::info!("      Q1: {:x}", output2.1);
-    log::info!("[+] C2 (predictive) = ");
-    log::info!(
-        "    {}{}",
+    let c2 = format!(
+        "{}{}",
         reversed_string(output.0 ^ output2.0),
         reversed_string(output.1 ^ output2.1)
     );
+    log::info!("[+] C2 (predictive) = ");
+    log::info!("    {}", c2);
+    println!("{c2}");
     Ok(())
 }
 
