@@ -20,8 +20,16 @@ scirpophaga的细节请见[cuscuta的草稿 - 5](https://blog.nofyso.cc/2026/05/
 
 当然啦，自己编译也不是不行……
 
+**由于scirpophaga依赖unicorn，所以我们需要安装clang, cmake, pkg-config才能编译成功**
+
 ```shell
 git clone https://github.com/cuscutaceae/scirpophaga
 cd scirpophaga
 cargo run /path/to/the/nofy.so
 ```
+
+### 输出日志
+
+如需查看日志，请设置`RUST_LOG`环境变量为`"info"`
+
+若程序顺利执行，则会输出常量值；否则，会输出简略的错误信息
