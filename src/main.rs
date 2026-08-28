@@ -6,7 +6,7 @@ use unicorn_engine::{Arch, Mode, Prot, RegisterARM64, Unicorn};
 const FRAG1: &[u8] = include_bytes!("../frag1.bin");
 const FRAG2: &[u8] = include_bytes!("../frag2.bin");
 const PRE1_FUN_LEN: usize = 0x1330;
-const PRE2_RUN_LEN: usize = 0x2974;
+const PRE2_RUN_LEN: usize = 0x2888;
 
 fn main() {
     env_logger::init();
@@ -17,7 +17,7 @@ fn main() {
     let file =
         fs::read(args[1].clone()).unwrap_or_else(|_| panic!("no file found: {}", args[1].clone()));
     log::info!("┌───────────────────────┐");
-    log::info!("│   scirpophaga 0.1.0   │");
+    log::info!("│   scirpophaga 0.1.1   │");
     log::info!("│  qxalaris nofyso ww~  │");
     log::info!("└───────────────────────┘");
     if let Err(e) = start(&file) {
@@ -209,12 +209,23 @@ fn sim_2(
     uc.reg_write(RegisterARM64::X2, para_addr + para3)?;
     uc.reg_write(RegisterARM64::X3, para_addr + para4)?;
     uc.reg_write(RegisterARM64::SP, sp_addr + 0x5b0)?;
+    
     uc_fill(
         &mut uc,
-        base_addr + offset + 0x14e4,
-        base_addr + offset + 0x15bc,
+        base_addr + offset + 0x13f8,
+        base_addr + offset + 0x14d0,
     )?;
+    // uc_fill(
+    //     &mut uc,
+    //     base_addr + offset + 0x14c0,
+    //     base_addr + offset + 0x14d0,
+    // )?;
     // uc_dump(&uc, box_addr, 0x800)?;
+
+    // uc.add_code_hook(base_addr+offset, base_addr+offset + 0xFFFF, |f, t, y| {
+    //     println!("{t:X}")
+    // })?;
+
     uc.emu_start(base_addr + offset, base_addr + offset + len, 0, 0)?;
     Ok((
         uc_print_long_reg(&uc, RegisterARM64::Q0),
