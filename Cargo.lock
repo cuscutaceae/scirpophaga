@@ -174,6 +174,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fARM64"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07944644247de4696c3e847a61d939928474563df1d6fc3cc5583a89008c60f7"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -389,10 +395,11 @@ checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "scirpophaga"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "env_logger",
+ "fARM64",
  "goblin",
  "hex",
  "log",

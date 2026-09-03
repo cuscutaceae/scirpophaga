@@ -1,12 +1,12 @@
 use std::{env, fs};
 
+use anyhow::bail;
+use fARM64::{Decoder, DecoderOptions, Mnemonic, Operand::ImmShiftedMove, Register};
 use goblin::elf::Elf;
 use unicorn_engine::{Arch, Mode, Prot, RegisterARM64, Unicorn};
 
 const FRAG1: &[u8] = include_bytes!("../frag1.bin");
-const FRAG2: &[u8] = include_bytes!("../frag2.bin");
 const PRE1_FUN_LEN: usize = 0x1330;
-const PRE2_RUN_LEN: usize = 0x2888;
 
 fn main() {
     env_logger::init();
@@ -23,7 +23,7 @@ fn main() {
     log::info!(r" \__ \ (__| | |  | |_) | (_) | |_) | | | | (_| | (_| | (_| |");
     log::info!(r" |___/\___|_|_|  | .__/ \___/| .__/|_| |_|\__,_|\__, |\__,_|");
     log::info!(r"                 | |         | |                 __/ |      ");
-    log::info!(r" qxalaris nofyso |_| v0.1.1  |_|                |___/       ");
+    log::info!(r" qxalaris nofyso |_| v0.1.2  |_|                |___/       ");
     log::info!(r"     Source: https://github.com/cuscutaceae/scirpophaga     ");
     log::info!("");
     if let Err(e) = start(&file) {
@@ -42,12 +42,17 @@ fn start(input: &[u8]) -> anyhow::Result<()> {
         .windows(FRAG1.len())
         .position(|it| it == FRAG1)
         .ok_or(Error::FragNotFound("FRAG1".to_string()))?;
-    log::info!("[+] found C2_pre1 fn offset: 0x{:08x}", pos1);
-    let pos2 = input
-        .windows(FRAG2.len())
-        .position(|it| it == FRAG2)
-        .ok_or(Error::FragNotFound("FRAG2".to_string()))?;
-    log::info!("[+] found C2_pre2 fn offset: 0x{:08x}", pos2);
+    log::info!(
+        "[+] found C2_pre1 fn offset with simple matching: 0x{:08x}",
+        pos1
+    );
+    let pos2 = search_for_fun(input)?;
+    log::info!("[+] found C2_pre2 fn offset with fun search:");
+    log::info!("      adrl offset: 0x{:08x}", pos2.adrl_offset);
+    log::info!("      fun offset:  0x{:08x}", pos2.function_offset);
+    log::info!("      term offset: 0x{:08x}", pos2.terminal_offset);
+    log::info!("      fill from:   0x{:08x}", pos2.fill_from);
+    log::info!("      fill to:     0x{:08x}", pos2.fill_to);
     log::info!("[*] parsing elf, len: 0x{:08x}", input.len());
     let elf = try_parse_elf(input)?;
     log::info!("[+] found elf PT_LOAD segments:");
@@ -78,7 +83,7 @@ fn start(input: &[u8]) -> anyhow::Result<()> {
     log::info!("      Q0: {:x}", output.0);
     log::info!("      Q1: {:x}", output.1);
     log::info!("[*] running sample2: C2_pre2");
-    let output2 = sim_2(input, pos2 as u64, PRE2_RUN_LEN as u64, &elf)?;
+    let output2 = sim_2(input, pos2, &elf)?;
     log::info!("[+] sim_2 finished");
     log::info!("      Q0: {:x}", output2.0);
     log::info!("      Q1: {:x}", output2.1);
@@ -112,7 +117,7 @@ struct ElfInit {
 
 fn try_parse_elf(bin: &[u8]) -> Result<Vec<ElfInit>, goblin::error::Error> {
     let elf = Elf::parse(bin)?;
-    let mut output = vec![];
+    let mut init_output = Vec::new();
     for it in &elf.program_headers {
         if it.p_type == goblin::elf64::program_header::PT_LOAD {
             let va = it.p_vaddr;
@@ -120,7 +125,7 @@ fn try_parse_elf(bin: &[u8]) -> Result<Vec<ElfInit>, goblin::error::Error> {
             let memsz = it.p_memsz;
             let offset = it.p_offset as usize;
             let range = &bin[offset..offset + filesz as usize];
-            output.push(ElfInit {
+            init_output.push(ElfInit {
                 mem_offset: va,
                 file_offset: offset as u64,
                 file_sz: filesz,
@@ -129,7 +134,7 @@ fn try_parse_elf(bin: &[u8]) -> Result<Vec<ElfInit>, goblin::error::Error> {
             });
         }
     }
-    Ok(output)
+    Ok(init_output)
 }
 
 fn sim_1(
@@ -191,8 +196,7 @@ fn sim_1(
 
 fn sim_2(
     bin: &[u8],
-    offset: u64,
-    len: u64,
+    offset: FunctionSearchResult,
     elf_mapping: &[ElfInit],
 ) -> Result<(u128, u128), unicorn_engine::uc_error> {
     let mut uc = Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)?;
@@ -266,20 +270,30 @@ fn sim_2(
     log::info!("      X2 = 0x{:08x}", uc.reg_read(RegisterARM64::X2)?);
     log::info!("      X3 = 0x{:08x}", uc.reg_read(RegisterARM64::X3)?);
     log::info!("      SP = 0x{:08x}", uc.reg_read(RegisterARM64::SP)?);
-    let fill_from = 0x13f8;
-    let fill_to = 0x14d0;
     uc_fill(
         &mut uc,
-        base_addr + offset + fill_from,
-        base_addr + offset + fill_to,
+        base_addr + offset.fill_from,
+        base_addr + offset.fill_to,
     )?;
     log::info!(
-        "[+] filled offset: 0x{fill_from:08x}~0x{fill_to:08x} (file_offset: 0x{:08x}~0x{:08x}) size: 0x{:08x}",
-        offset + fill_from,
-        offset + fill_to,
-        fill_to - fill_from
+        "[+] filled offset: 0x{:08x}~0x{:08x} size: 0x{:08x}",
+        offset.fill_from,
+        offset.fill_to,
+        offset.fill_to - offset.fill_from
     );
-    uc.emu_start(base_addr + offset, base_addr + offset + len, 0, 0)?;
+    uc.add_code_hook(
+        base_addr + offset.function_offset,
+        base_addr + offset.terminal_offset,
+        |_, pos, _| {
+            log::trace!("ran: {pos:08x}");
+        },
+    )?;
+    uc.emu_start(
+        base_addr + offset.function_offset,
+        base_addr + offset.terminal_offset,
+        0,
+        0,
+    )?;
     Ok((
         uc_print_long_reg(&uc, RegisterARM64::Q0),
         uc_print_long_reg(&uc, RegisterARM64::Q1),
@@ -302,4 +316,84 @@ fn uc_print_long_reg(uc: &Unicorn<'_, ()>, reg: RegisterARM64) -> u128 {
     let mut u = [0u8; 16];
     u.copy_from_slice(&uc.reg_read_long(reg).unwrap());
     u128::from_le_bytes(u)
+}
+
+#[derive(Debug)]
+struct FunctionSearchResult {
+    function_offset: u64,
+    adrl_offset: u64,
+    terminal_offset: u64,
+    fill_from: u64,
+    fill_to: u64,
+}
+
+fn search_for_fun(input: &[u8]) -> anyhow::Result<FunctionSearchResult> {
+    // 我知道这很鲁莽，但是我目前想不出更好的方法了
+    let mut dec = Decoder::new(input, 0x0, DecoderOptions::default());
+    let mut adrp_base_op = None;
+    let mut function_start_pos = None;
+    let mut pattern_pos = None;
+    let mut temp_bl = Vec::new();
+    while dec.can_decode() {
+        let inst = dec.decode();
+        if inst.is_invalid() {
+            continue;
+        }
+        match inst.mnemonic() {
+            Mnemonic::Bl => {
+                temp_bl.insert(0, dec.ip());
+                if pattern_pos.is_none() {
+                    temp_bl.truncate(3);
+                }
+            }
+            Mnemonic::Mov if pattern_pos.is_some() => {
+                let imm = inst.op_immediate(1) as i64;
+                if imm == -19 {
+                    return Ok(FunctionSearchResult {
+                        function_offset: function_start_pos.unwrap(),
+                        adrl_offset: pattern_pos.unwrap() - 0x4,
+                        terminal_offset: dec.ip() + 0x4,
+                        fill_from: temp_bl.last().unwrap() - 0x4,
+                        fill_to: *temp_bl.first().unwrap(),
+                    });
+                }
+            }
+            Mnemonic::Stp if pattern_pos.is_none() => {
+                let reg1 = inst.op_register(0);
+                let reg2 = inst.op_register(1);
+                if (reg1 == Register::X29 && reg2 == Register::X30)
+                    || (reg2 == Register::X29 && reg1 == Register::X30)
+                {
+                    function_start_pos = Some(dec.ip());
+                }
+            }
+            Mnemonic::Adrp if pattern_pos.is_none() => {
+                let imm = inst.op_immediate(1);
+                if imm >= input.len().try_into().unwrap() {
+                    continue;
+                }
+                adrp_base_op = Some(imm);
+            }
+            Mnemonic::Add
+                if let Some(adrp_base) = adrp_base_op
+                    && pattern_pos.is_none() =>
+            {
+                adrp_base_op.take();
+                let ImmShiftedMove { imm: add_imm, lsl } = inst.op(2) else {
+                    continue;
+                };
+                let addr = (adrp_base + ((add_imm as u64) << lsl)) as usize;
+                let pattern = "game/content_bundle".as_bytes();
+                let end = addr + pattern.len();
+                if end >= input.len() {
+                    continue;
+                }
+                if &input[addr..end] == pattern {
+                    pattern_pos = Some(dec.ip());
+                }
+            }
+            _ => {}
+        }
+    }
+    bail!("failed to find function");
 }
